@@ -81,29 +81,37 @@ export async function POST(request: NextRequest) {
 
     // Increment usage counter
     if (hasServiceRole()) {
-      const now = new Date()
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]
-      const serviceClient = createServiceClient()
+      try {
+        const now = new Date()
+        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]
+        const serviceClient = createServiceClient()
 
-      // Upsert usage counter
-      await serviceClient
-        .from('usage_counters')
-        .upsert(
-          {
-            user_id: user.id,
-            month: monthStart,
-            questions_asked: 1,
-          },
-          { onConflict: 'user_id,month' }
-        )
-        .then(() => {
-          // Increment if record existed
-          return serviceClient.rpc('increment_question_count', {
-            p_user_id: user.id,
-            p_month: monthStart,
-          })
-        })
-        .catch(console.error)
+        // Upsert usage counter - increment questions_asked
+        const { data: existing } = await serviceClient
+          .from('usage_counters')
+          .select('questions_asked')
+          .eq('user_id', user.id)
+          .eq('month', monthStart)
+          .single()
+
+        if (existing) {
+          await serviceClient
+            .from('usage_counters')
+            .update({ questions_asked: existing.questions_asked + 1 })
+            .eq('user_id', user.id)
+            .eq('month', monthStart)
+        } else {
+          await serviceClient
+            .from('usage_counters')
+            .insert({
+              user_id: user.id,
+              month: monthStart,
+              questions_asked: 1,
+            })
+        }
+      } catch (e) {
+        console.error('Error incrementing usage counter:', e)
+      }
     }
 
     return NextResponse.json({ question }, { status: 201 })
