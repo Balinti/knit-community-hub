@@ -187,29 +187,33 @@ export async function incrementQuestionCount(
   const now = new Date()
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]
 
-  // Upsert the usage counter
-  await supabase
-    .from('usage_counters')
-    .upsert(
-      {
-        user_id: userId,
-        month: monthStart,
-        questions_asked: 1,
-      },
-      {
-        onConflict: 'user_id,month',
-        ignoreDuplicates: false,
-      }
-    )
-
-  // If record exists, increment
-  await supabase.rpc('increment_questions', {
-    p_user_id: userId,
-    p_month: monthStart,
-  }).catch(() => {
-    // Fallback: just update directly
-    supabase
+  try {
+    // Try to get existing record
+    const { data: existing } = await supabase
       .from('usage_counters')
-      .update({ questions_asked: supabase.rpc('', {}) })
-  })
+      .select('questions_asked')
+      .eq('user_id', userId)
+      .eq('month', monthStart)
+      .single()
+
+    if (existing) {
+      // Update existing record
+      await supabase
+        .from('usage_counters')
+        .update({ questions_asked: existing.questions_asked + 1 })
+        .eq('user_id', userId)
+        .eq('month', monthStart)
+    } else {
+      // Insert new record
+      await supabase
+        .from('usage_counters')
+        .insert({
+          user_id: userId,
+          month: monthStart,
+          questions_asked: 1,
+        })
+    }
+  } catch (error) {
+    console.error('Error incrementing question count:', error)
+  }
 }
