@@ -70,7 +70,7 @@ interface Note {
   page_number: number
   bbox?: BBox
   color: string
-  text?: string
+  text: string | null
   created_at: string
   note_photos?: { id: string; storage_path: string }[]
 }
