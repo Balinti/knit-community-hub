@@ -12,9 +12,9 @@ export function AuthForm() {
   const [email, setEmail] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
-  const supabase = createClient()
 
   const handleEmailLogin = async (e: React.FormEvent) => {
+    const supabase = createClient()
     e.preventDefault()
     setIsLoading(true)
     setMessage(null)
@@ -44,6 +44,7 @@ export function AuthForm() {
   }
 
   const handleGoogleLogin = async () => {
+    const supabase = createClient()
     setIsLoading(true)
     setMessage(null)
 
