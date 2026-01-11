@@ -31,6 +31,8 @@ import { CounterWidget, AddCounterForm } from "@/components/counter/CounterWidge
 import { NoteCard, NoteColorPicker } from "@/components/notes/NoteCard"
 import { QuestionCard } from "@/components/qna/QuestionCard"
 import { useToast } from "@/components/ui/use-toast"
+import { useGuest } from "@/components/guest/GuestProvider"
+import { getGuestProjects, saveGuestProject, GuestProject, generateGuestId } from "@/lib/guest-session"
 import {
   ArrowLeft,
   Upload,
@@ -43,6 +45,7 @@ import {
   Loader2,
   Plus,
   Trash2,
+  Lock,
 } from "lucide-react"
 import { formatDate } from "@/lib/utils"
 
@@ -111,9 +114,11 @@ export default function ProjectPage() {
   const params = useParams()
   const router = useRouter()
   const { toast } = useToast()
+  const { isGuest } = useGuest()
   const projectId = params.id as string
 
   const [project, setProject] = useState<Project | null>(null)
+  const [guestProject, setGuestProject] = useState<GuestProject | null>(null)
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState("pattern")
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
@@ -137,10 +142,65 @@ export default function ProjectPage() {
   const [questionBody, setQuestionBody] = useState("")
   const [questionVisibility, setQuestionVisibility] = useState<"private" | "shared">("private")
 
+  // Guest counter states
+  const [showAddCounterDialog, setShowAddCounterDialog] = useState(false)
+  const [newCounterName, setNewCounterName] = useState("")
+  const [newCounterTarget, setNewCounterTarget] = useState("")
+
   useEffect(() => {
-    fetchProject()
-    getCurrentUser()
-  }, [projectId])
+    if (isGuest) {
+      loadGuestProject()
+    } else {
+      fetchProject()
+      getCurrentUser()
+    }
+  }, [projectId, isGuest])
+
+  const loadGuestProject = () => {
+    const projects = getGuestProjects()
+    const found = projects.find(p => p.id === projectId)
+    if (found) {
+      setGuestProject(found)
+      // Convert to Project format for display
+      setProject({
+        id: found.id,
+        name: found.name,
+        craft_type: found.craft_type,
+        status: found.status,
+        created_at: found.created_at,
+        patterns: [],
+        notes: found.notes.map(n => ({
+          id: n.id,
+          page_number: n.page_number || 1,
+          color: "#fef08a",
+          text: n.content,
+          created_at: n.created_at
+        })),
+        counters: found.counters.map(c => ({
+          id: c.id,
+          name: c.name,
+          current_value: c.current_value,
+          target: c.target_value || null
+        })),
+        qna_questions: []
+      })
+    } else {
+      toast({
+        title: "Error",
+        description: "Project not found",
+        variant: "destructive",
+      })
+      router.push("/app")
+    }
+    setLoading(false)
+  }
+
+  const updateGuestProject = (updates: Partial<GuestProject>) => {
+    if (!guestProject) return
+    const updated = { ...guestProject, ...updates, updated_at: new Date().toISOString() }
+    saveGuestProject(updated)
+    setGuestProject(updated)
+  }
 
   const getCurrentUser = async () => {
     const { createClient } = await import("@/lib/supabase/client")
@@ -179,6 +239,15 @@ export default function ProjectPage() {
   }
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (isGuest) {
+      toast({
+        title: "Sign in required",
+        description: "Create a free account to upload PDF patterns",
+        variant: "destructive",
+      })
+      return
+    }
+
     const file = e.target.files?.[0]
     if (!file) return
 
@@ -220,6 +289,15 @@ export default function ProjectPage() {
 
   const handleSaveLink = async () => {
     if (!patternLink.trim()) return
+
+    if (isGuest) {
+      toast({
+        title: "Sign in required",
+        description: "Create a free account to save pattern links",
+        variant: "destructive",
+      })
+      return
+    }
 
     try {
       const response = await fetch(`/api/projects/${projectId}/pattern/link`, {
@@ -298,6 +376,18 @@ export default function ProjectPage() {
   }
 
   const handleUpdateNote = async (noteId: string, text: string) => {
+    if (isGuest && guestProject) {
+      const notes = guestProject.notes.map(n =>
+        n.id === noteId ? { ...n, content: text } : n
+      )
+      updateGuestProject({ notes })
+      setProject(prev => prev ? {
+        ...prev,
+        notes: prev.notes?.map(n => n.id === noteId ? { ...n, text } : n)
+      } : null)
+      return
+    }
+
     try {
       const response = await fetch(`/api/notes/${noteId}`, {
         method: "PATCH",
@@ -317,6 +407,17 @@ export default function ProjectPage() {
   }
 
   const handleDeleteNote = async (noteId: string) => {
+    if (isGuest && guestProject) {
+      const notes = guestProject.notes.filter(n => n.id !== noteId)
+      updateGuestProject({ notes })
+      setProject(prev => prev ? {
+        ...prev,
+        notes: prev.notes?.filter(n => n.id !== noteId)
+      } : null)
+      toast({ title: "Note deleted" })
+      return
+    }
+
     try {
       const response = await fetch(`/api/notes/${noteId}`, { method: "DELETE" })
       if (!response.ok) throw new Error("Failed to delete note")
@@ -332,6 +433,18 @@ export default function ProjectPage() {
   }
 
   const handleUpdateCounter = async (counterId: string, value: number) => {
+    if (isGuest && guestProject) {
+      const counters = guestProject.counters.map(c =>
+        c.id === counterId ? { ...c, current_value: value } : c
+      )
+      updateGuestProject({ counters })
+      setProject(prev => prev ? {
+        ...prev,
+        counters: prev.counters?.map(c => c.id === counterId ? { ...c, current_value: value } : c)
+      } : null)
+      return
+    }
+
     try {
       const response = await fetch(`/api/counters/${counterId}`, {
         method: "PATCH",
@@ -351,6 +464,23 @@ export default function ProjectPage() {
   }
 
   const handleAddCounter = async (name: string, target?: number) => {
+    if (isGuest && guestProject) {
+      const newCounter = {
+        id: generateGuestId(),
+        name,
+        current_value: 0,
+        target_value: target
+      }
+      const counters = [...guestProject.counters, newCounter]
+      updateGuestProject({ counters })
+      setProject(prev => prev ? {
+        ...prev,
+        counters: [...(prev.counters || []), { id: newCounter.id, name, current_value: 0, target: target || null }]
+      } : null)
+      toast({ title: "Counter added" })
+      return
+    }
+
     try {
       const response = await fetch("/api/counters", {
         method: "POST",
@@ -375,6 +505,17 @@ export default function ProjectPage() {
   }
 
   const handleDeleteCounter = async (counterId: string) => {
+    if (isGuest && guestProject) {
+      const counters = guestProject.counters.filter(c => c.id !== counterId)
+      updateGuestProject({ counters })
+      setProject(prev => prev ? {
+        ...prev,
+        counters: prev.counters?.filter(c => c.id !== counterId)
+      } : null)
+      toast({ title: "Counter deleted" })
+      return
+    }
+
     try {
       const response = await fetch(`/api/counters/${counterId}`, { method: "DELETE" })
       if (!response.ok) throw new Error("Failed to delete counter")
@@ -390,6 +531,15 @@ export default function ProjectPage() {
   }
 
   const handleAskQuestion = async () => {
+    if (isGuest) {
+      toast({
+        title: "Sign in required",
+        description: "Create a free account to ask questions",
+        variant: "destructive",
+      })
+      return
+    }
+
     if (!questionTitle.trim() || !questionBody.trim()) return
 
     try {
@@ -509,17 +659,25 @@ export default function ProjectPage() {
               </p>
             </div>
           </div>
-          <Badge
-            variant={
-              project.status === "active"
-                ? "default"
-                : project.status === "completed"
-                ? "success"
-                : "secondary"
-            }
-          >
-            {project.status}
-          </Badge>
+          <div className="flex items-center gap-2">
+            {isGuest && (
+              <Badge variant="outline" className="gap-1">
+                <Lock className="h-3 w-3" />
+                Guest
+              </Badge>
+            )}
+            <Badge
+              variant={
+                project.status === "active"
+                  ? "default"
+                  : project.status === "completed"
+                  ? "success"
+                  : "secondary"
+              }
+            >
+              {project.status}
+            </Badge>
+          </div>
         </div>
       </div>
 
@@ -560,53 +718,69 @@ export default function ProjectPage() {
                 <CardHeader>
                   <CardTitle>Add Your Pattern</CardTitle>
                   <CardDescription>
-                    Upload a PDF or add a link to your pattern
+                    {isGuest
+                      ? "Create a free account to upload PDF patterns"
+                      : "Upload a PDF or add a link to your pattern"}
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div>
-                    <Label htmlFor="pdf-upload" className="cursor-pointer">
-                      <div className="border-2 border-dashed rounded-lg p-8 text-center hover:border-primary transition-colors">
-                        {isUploadingPattern ? (
-                          <Loader2 className="h-8 w-8 mx-auto animate-spin text-primary" />
-                        ) : (
-                          <>
-                            <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-                            <p className="font-medium">Upload PDF</p>
-                            <p className="text-sm text-muted-foreground">
-                              Click to select or drag and drop
-                            </p>
-                          </>
-                        )}
+                  {isGuest ? (
+                    <div className="text-center py-8">
+                      <Lock className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                      <p className="text-muted-foreground mb-4">
+                        PDF upload requires a free account
+                      </p>
+                      <Link href="/login">
+                        <Button>Create Free Account</Button>
+                      </Link>
+                    </div>
+                  ) : (
+                    <>
+                      <div>
+                        <Label htmlFor="pdf-upload" className="cursor-pointer">
+                          <div className="border-2 border-dashed rounded-lg p-8 text-center hover:border-primary transition-colors">
+                            {isUploadingPattern ? (
+                              <Loader2 className="h-8 w-8 mx-auto animate-spin text-primary" />
+                            ) : (
+                              <>
+                                <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+                                <p className="font-medium">Upload PDF</p>
+                                <p className="text-sm text-muted-foreground">
+                                  Click to select or drag and drop
+                                </p>
+                              </>
+                            )}
+                          </div>
+                        </Label>
+                        <Input
+                          id="pdf-upload"
+                          type="file"
+                          accept=".pdf"
+                          className="hidden"
+                          onChange={handleFileUpload}
+                          disabled={isUploadingPattern}
+                        />
                       </div>
-                    </Label>
-                    <Input
-                      id="pdf-upload"
-                      type="file"
-                      accept=".pdf"
-                      className="hidden"
-                      onChange={handleFileUpload}
-                      disabled={isUploadingPattern}
-                    />
-                  </div>
 
-                  <div className="relative">
-                    <div className="absolute inset-0 flex items-center">
-                      <span className="w-full border-t" />
-                    </div>
-                    <div className="relative flex justify-center text-xs uppercase">
-                      <span className="bg-background px-2 text-muted-foreground">Or</span>
-                    </div>
-                  </div>
+                      <div className="relative">
+                        <div className="absolute inset-0 flex items-center">
+                          <span className="w-full border-t" />
+                        </div>
+                        <div className="relative flex justify-center text-xs uppercase">
+                          <span className="bg-background px-2 text-muted-foreground">Or</span>
+                        </div>
+                      </div>
 
-                  <Button
-                    variant="outline"
-                    className="w-full"
-                    onClick={() => setShowLinkDialog(true)}
-                  >
-                    <LinkIcon className="h-4 w-4 mr-2" />
-                    Add Pattern Link
-                  </Button>
+                      <Button
+                        variant="outline"
+                        className="w-full"
+                        onClick={() => setShowLinkDialog(true)}
+                      >
+                        <LinkIcon className="h-4 w-4 mr-2" />
+                        Add Pattern Link
+                      </Button>
+                    </>
+                  )}
                 </CardContent>
               </Card>
             </div>
@@ -683,11 +857,15 @@ export default function ProjectPage() {
                   <StickyNote className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
                   <h3 className="text-lg font-semibold mb-2">No notes yet</h3>
                   <p className="text-muted-foreground mb-4">
-                    Go to the Pattern tab to add highlights and notes
+                    {isGuest
+                      ? "Create a free account to add notes to PDF patterns"
+                      : "Go to the Pattern tab to add highlights and notes"}
                   </p>
-                  <Button onClick={() => setActiveTab("pattern")}>
-                    Go to Pattern
-                  </Button>
+                  {!isGuest && (
+                    <Button onClick={() => setActiveTab("pattern")}>
+                      Go to Pattern
+                    </Button>
+                  )}
                 </CardContent>
               </Card>
             ) : (
@@ -742,7 +920,17 @@ export default function ProjectPage() {
           <div className="container mx-auto p-4 max-w-3xl">
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-lg font-semibold">Questions & Answers</h2>
-              <Button onClick={() => setShowQuestionDialog(true)}>
+              <Button onClick={() => {
+                if (isGuest) {
+                  toast({
+                    title: "Sign in required",
+                    description: "Create a free account to ask questions",
+                    variant: "destructive",
+                  })
+                } else {
+                  setShowQuestionDialog(true)
+                }
+              }}>
                 <Plus className="h-4 w-4 mr-2" />
                 Ask Question
               </Button>
@@ -754,11 +942,15 @@ export default function ProjectPage() {
                   <MessageSquare className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
                   <h3 className="text-lg font-semibold mb-2">No questions yet</h3>
                   <p className="text-muted-foreground mb-4">
-                    Ask a question about this pattern
+                    {isGuest
+                      ? "Create a free account to ask questions about patterns"
+                      : "Ask a question about this pattern"}
                   </p>
-                  <Button onClick={() => setShowQuestionDialog(true)}>
-                    Ask Question
-                  </Button>
+                  {!isGuest && (
+                    <Button onClick={() => setShowQuestionDialog(true)}>
+                      Ask Question
+                    </Button>
+                  )}
                 </CardContent>
               </Card>
             ) : (

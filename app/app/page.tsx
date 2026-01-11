@@ -6,8 +6,10 @@ import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Plus, FileText, Loader2, FolderOpen } from "lucide-react"
+import { Plus, FileText, Loader2, FolderOpen, AlertCircle } from "lucide-react"
 import { formatDate } from "@/lib/utils"
+import { useGuest } from "@/components/guest/GuestProvider"
+import { getGuestProjects, GuestProject } from "@/lib/guest-session"
 
 interface Project {
   id: string
@@ -27,11 +29,26 @@ interface Project {
 export default function DashboardPage() {
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
-  const supabase = createClient()
+  const { isGuest } = useGuest()
 
   useEffect(() => {
-    fetchProjects()
-  }, [])
+    if (isGuest) {
+      // Load guest projects from localStorage
+      const guestProjects = getGuestProjects()
+      setProjects(guestProjects.map(p => ({
+        id: p.id,
+        name: p.name,
+        craft_type: p.craft_type,
+        status: p.status,
+        created_at: p.created_at,
+        updated_at: p.updated_at,
+        patterns: []
+      })))
+      setLoading(false)
+    } else {
+      fetchProjects()
+    }
+  }, [isGuest])
 
   const fetchProjects = async () => {
     try {
@@ -57,6 +74,22 @@ export default function DashboardPage() {
 
   return (
     <div className="container mx-auto px-4 py-8">
+      {/* Guest Mode Banner */}
+      {isGuest && (
+        <div className="mb-6 p-4 bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded-lg flex items-start gap-3">
+          <AlertCircle className="h-5 w-5 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
+          <div>
+            <h3 className="font-medium text-amber-800 dark:text-amber-200">Guest Mode</h3>
+            <p className="text-sm text-amber-700 dark:text-amber-300 mt-1">
+              Your projects are saved locally in this browser.
+              <Link href="/login" className="underline font-medium ml-1">
+                Create a free account
+              </Link> to save them permanently and access from any device.
+            </p>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-3xl font-bold">Your Projects</h1>

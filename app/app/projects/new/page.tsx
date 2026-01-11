@@ -16,6 +16,8 @@ import {
 import { Loader2, ArrowLeft } from "lucide-react"
 import Link from "next/link"
 import { useToast } from "@/components/ui/use-toast"
+import { useGuest } from "@/components/guest/GuestProvider"
+import { saveGuestProject, generateGuestId, getGuestProjects } from "@/lib/guest-session"
 
 export default function NewProjectPage() {
   const [name, setName] = useState("")
@@ -23,6 +25,7 @@ export default function NewProjectPage() {
   const [isLoading, setIsLoading] = useState(false)
   const router = useRouter()
   const { toast } = useToast()
+  const { isGuest } = useGuest()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -39,33 +42,70 @@ export default function NewProjectPage() {
     setIsLoading(true)
 
     try {
-      const response = await fetch("/api/projects", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim(), craft_type: craftType }),
-      })
+      if (isGuest) {
+        // Guest mode: save to localStorage
+        const guestProjects = getGuestProjects()
 
-      const data = await response.json()
-
-      if (!response.ok) {
-        if (data.code === "LIMIT_EXCEEDED") {
+        // Limit guest projects to 3
+        if (guestProjects.length >= 3) {
           toast({
             title: "Project limit reached",
-            description: data.error,
+            description: "Create a free account to save more projects",
             variant: "destructive",
           })
-        } else {
-          throw new Error(data.error || "Failed to create project")
+          setIsLoading(false)
+          return
         }
-        return
+
+        const newProject = {
+          id: generateGuestId(),
+          name: name.trim(),
+          craft_type: craftType,
+          status: "active",
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          notes: [],
+          counters: []
+        }
+
+        saveGuestProject(newProject)
+
+        toast({
+          title: "Project created",
+          description: "Your project has been saved locally",
+        })
+
+        router.push(`/app/projects/${newProject.id}`)
+      } else {
+        // Authenticated mode: use API
+        const response = await fetch("/api/projects", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: name.trim(), craft_type: craftType }),
+        })
+
+        const data = await response.json()
+
+        if (!response.ok) {
+          if (data.code === "LIMIT_EXCEEDED") {
+            toast({
+              title: "Project limit reached",
+              description: data.error,
+              variant: "destructive",
+            })
+          } else {
+            throw new Error(data.error || "Failed to create project")
+          }
+          return
+        }
+
+        toast({
+          title: "Project created",
+          description: "Your new project has been created successfully",
+        })
+
+        router.push(`/app/projects/${data.project.id}`)
       }
-
-      toast({
-        title: "Project created",
-        description: "Your new project has been created successfully",
-      })
-
-      router.push(`/app/projects/${data.project.id}`)
     } catch (error: any) {
       toast({
         title: "Error",
